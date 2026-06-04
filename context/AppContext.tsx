@@ -48,8 +48,8 @@ type AppAction =
   | { type: "SET_EXAM_RESULT"; payload: ExamResult }
   | { type: "SET_PERSONA"; payload: PersonaSettings }
   | { type: "SET_LOADING"; payload: boolean }
-  | { type: "RESET_EXAM" }
-  | { type: "CREATE_SESSION"; payload: { id: string; name?: string; mode: AppMode } }
+  | { type: "RESET_EXAM"; topic?: string }
+  | { type: "CREATE_SESSION"; payload: { id: string; name?: string; mode: AppMode; topic?: string } }
   | { type: "SWITCH_SESSION"; payload: { id: string } }
   | { type: "DELETE_SESSION"; payload: { id: string } }
   | { type: "SAVE_SESSION" }
@@ -112,16 +112,25 @@ function reducer(state: AppState, action: AppAction): AppState {
     case "SET_LOADING":
       return { ...state, isLoading: action.payload };
 
-    case "RESET_EXAM":
+    case "RESET_EXAM": {
+      const resetSessions = action.topic
+        ? saveCurrentSession({ ...state, sessions: Object.fromEntries(
+            Object.entries(state.sessions).map(([k, s]) =>
+              k === state.activeSessionId ? [k, { ...s, examTopic: action.topic }] : [k, s]
+            )
+          )})
+        : saveCurrentSession(state);
       return {
         ...state,
+        sessions: resetSessions,
         examMessages: [],
         examRallyCount: 0,
         examResult: null,
       };
+    }
 
     case "CREATE_SESSION": {
-      const { id, name, mode } = action.payload;
+      const { id, name, mode, topic } = action.payload;
       const now = new Date().toISOString();
       const newSession: Session = {
         id,
@@ -131,6 +140,7 @@ function reducer(state: AppState, action: AppAction): AppState {
         examMessages: [],
         examRallyCount: 0,
         examResult: null,
+        examTopic: mode === "exam" ? topic : undefined,
         createdAt: now,
       };
       const savedSessions = saveCurrentSession(state);
