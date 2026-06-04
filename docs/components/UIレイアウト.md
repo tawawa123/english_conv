@@ -19,7 +19,7 @@
 
 ### `SupportPane`
 - モード切替、ペルソナ設定、例文提案、日本語 Q&A などを提供するサイドサポートウィンドウ。
-- `state.mode` の変更や `RESET_EXAM` の送信を通じて Exam モードへの移行を管理する。
+- `RESET_EXAM` の送信を通じて Exam の再挑戦を管理する。モードはセッション作成時に確定しており、SupportPane からは変更しない。
 - `personaInput` の入力と保存を行い、`SET_PERSONA` を dispatch する。
 - `support` API への `suggest` / `ask` リクエストを実行して結果を表示する。
 
