@@ -31,6 +31,7 @@ export type Session = {
   examMessages: Message[];
   examRallyCount: number;
   examResult?: ExamResult | null;
+  examTopic?: string;
   createdAt: string;
   updatedAt?: string;
 };
