@@ -1,9 +1,9 @@
-import { useState, useRef, useEffect, KeyboardEvent } from "react";
+import { useState, useRef, useEffect, useCallback, KeyboardEvent } from "react";
 import { useApp } from "@/context/AppContext";
 import { Icon, TypingDots, ModeChip, Spinner } from "@/components/Icons";
 import { makeMessage, clockTime } from "@/lib/utils";
 import { sttStart, sttStop, isSttSupported } from "@/services/stt";
-import { ttsSpeak, isTtsSupported } from "@/services/tts";
+import { ttsSpeak, ttsStop, isTtsSupported } from "@/services/tts";
 import ReactMarkdown from "react-markdown";
 import type { ApiMessage, Message } from "@/types";
 
@@ -115,8 +115,23 @@ function EvalPopup({ msg, onClose }: { msg: Message; onClose: () => void }) {
 
 // ─── Message bubble ─────────────────────────────────────────────
 
-function Bubble({ msg, onEval }: { msg: Message; onEval?: (msg: Message) => void }) {
+function Bubble({
+  msg,
+  onEval,
+  onReplay,
+}: {
+  msg: Message;
+  onEval?: (msg: Message) => void;
+  onReplay?: (msg: Message) => void;
+}) {
   const isUser = msg.role === "user";
+  const canReplay = !isUser && !!onReplay;
+
+  function handleClick() {
+    if (isUser && onEval) onEval(msg);
+    else if (canReplay) onReplay!(msg);
+  }
+
   return (
     <div
       style={{
@@ -126,8 +141,8 @@ function Bubble({ msg, onEval }: { msg: Message; onEval?: (msg: Message) => void
       }}
     >
       <div
-        onClick={isUser && onEval ? () => onEval(msg) : undefined}
-        title={isUser ? "クリックして発話を評価" : undefined}
+        onClick={isUser && onEval || canReplay ? handleClick : undefined}
+        title={isUser ? "クリックして発話を評価" : canReplay ? "クリックして再読み上げ" : undefined}
         style={{
           maxWidth: "72%",
           padding: "10px 14px",
@@ -140,7 +155,7 @@ function Bubble({ msg, onEval }: { msg: Message; onEval?: (msg: Message) => void
           lineHeight: 1.55,
           boxShadow: "var(--shadow-sm)",
           border: isUser ? "none" : "1px solid var(--line)",
-          cursor: isUser && onEval ? "pointer" : "default",
+          cursor: (isUser && !!onEval) || canReplay ? "pointer" : "default",
         }}
       >
         <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
@@ -152,8 +167,15 @@ function Bubble({ msg, onEval }: { msg: Message; onEval?: (msg: Message) => void
             marginTop: 5,
             color: isUser ? "rgba(255,255,255,.6)" : "var(--ink-faint)",
             textAlign: "right",
+            display: "flex",
+            justifyContent: "flex-end",
+            alignItems: "center",
+            gap: 5,
           }}
         >
+          {canReplay && (
+            <Icon name="play" size={10} style={{ opacity: 0.5 }} />
+          )}
           {clockTime(msg.timestamp)}
           {isUser && onEval && (
             <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 10 }}>tap to review</span>
@@ -172,6 +194,7 @@ function ConversationPane() {
   const [isRecording, setIsRecording] = useState(false);
   const [sttError, setSttError] = useState("");
   const [evalMsg, setEvalMsg] = useState<Message | null>(null);
+  const ttsSupported = isTtsSupported();
   const sttSupported = isSttSupported();
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -222,6 +245,12 @@ function ConversationPane() {
     } finally {
       dispatch({ type: "SET_LOADING", payload: false });
     }
+  }
+
+  async function handleReplay(msg: Message) {
+    if (!ttsSupported) return;
+    ttsStop();
+    await ttsSpeak(msg.content);
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -308,7 +337,7 @@ function ConversationPane() {
           </div>
         )}
         {state.messages.map((m) => (
-          <Bubble key={m.id} msg={m} onEval={setEvalMsg} />
+          <Bubble key={m.id} msg={m} onEval={setEvalMsg} onReplay={ttsSupported ? handleReplay : undefined} />
         ))}
         {state.isLoading && (
           <div style={{ display: "flex", animation: "slideUp .16s ease" }}>
@@ -438,7 +467,7 @@ function parseSuggestions(raw: string): Suggestion[] {
     .filter((s) => s.en && s.ja);
 }
 
-function SupportPane() {
+function SupportPane({ width }: { width: number }) {
   const { state, dispatch } = useApp();
   const [tab, setTab] = useState<SupportTab>("suggest");
   const [personaText, setPersonaText] = useState(state.persona.prompt);
@@ -511,7 +540,7 @@ function SupportPane() {
   return (
     <div
       style={{
-        width: 300,
+        width,
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
@@ -732,11 +761,40 @@ function SupportPane() {
 
 // ─── NormalScreen ────────────────────────────────────────────────
 
+const SUPPORT_MIN = 80;
+const SUPPORT_MAX = 1100;
+const SUPPORT_DEFAULT = 300;
+
 export default function NormalScreen() {
   const { state } = useApp();
   const activeSession = state.activeSessionId
     ? state.sessions[state.activeSessionId]
     : null;
+
+  const [supportWidth, setSupportWidth] = useState(SUPPORT_DEFAULT);
+  const dragging = useRef(false);
+  const dragStartX = useRef(0);
+  const dragStartWidth = useRef(SUPPORT_DEFAULT);
+
+  const onMouseMove = useCallback((e: MouseEvent) => {
+    if (!dragging.current) return;
+    const delta = dragStartX.current - e.clientX;
+    setSupportWidth(Math.min(SUPPORT_MAX, Math.max(SUPPORT_MIN, dragStartWidth.current + delta)));
+  }, []);
+
+  const onMouseUp = useCallback(() => {
+    dragging.current = false;
+    window.removeEventListener("mousemove", onMouseMove);
+    window.removeEventListener("mouseup", onMouseUp);
+  }, [onMouseMove]);
+
+  function handleDividerMouseDown(e: React.MouseEvent) {
+    dragging.current = true;
+    dragStartX.current = e.clientX;
+    dragStartWidth.current = supportWidth;
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+  }
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -761,7 +819,20 @@ export default function NormalScreen() {
       )}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         <ConversationPane />
-        <SupportPane />
+        <div
+          onMouseDown={handleDividerMouseDown}
+          style={{
+            width: 5,
+            flexShrink: 0,
+            cursor: "col-resize",
+            background: "transparent",
+            borderLeft: "1px solid var(--line)",
+            transition: "background .15s",
+          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.background = "var(--accent-tint)"; }}
+          onMouseLeave={(e) => { (e.currentTarget as HTMLDivElement).style.background = "transparent"; }}
+        />
+        <SupportPane width={supportWidth} />
       </div>
     </div>
   );
