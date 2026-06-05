@@ -22,6 +22,7 @@ type AppState = {
   isLoading: boolean;
   sessions: Record<string, Session>;
   activeSessionId: string | null;
+  isHydrated: boolean;
 };
 
 const initialState: AppState = {
@@ -34,6 +35,7 @@ const initialState: AppState = {
   isLoading: false,
   sessions: {},
   activeSessionId: null,
+  isHydrated: false,
 };
 
 // ---------------------------------------------------------------------------
@@ -53,7 +55,7 @@ type AppAction =
   | { type: "SWITCH_SESSION"; payload: { id: string } }
   | { type: "DELETE_SESSION"; payload: { id: string } }
   | { type: "SAVE_SESSION" }
-  | { type: "LOAD_SESSION"; payload: { sessions: Record<string, Session> } }
+  | { type: "LOAD_SESSION"; payload: { sessions: Record<string, Session>; persona?: PersonaSettings } }
   | { type: "SAVE_ADVICE"; payload: { id: string; advice: string } };
 
 // ---------------------------------------------------------------------------
@@ -201,7 +203,12 @@ function reducer(state: AppState, action: AppAction): AppState {
       return { ...state, sessions: saveCurrentSession(state) };
 
     case "LOAD_SESSION":
-      return { ...state, sessions: action.payload.sessions };
+      return {
+        ...state,
+        isHydrated: true,
+        sessions: action.payload.sessions,
+        ...(action.payload.persona ? { persona: action.payload.persona } : {}),
+      };
 
     case "SAVE_ADVICE": {
       const { id, advice } = action.payload;
@@ -290,11 +297,38 @@ const AppContext = createContext<AppContextValue | null>(null);
 // ---------------------------------------------------------------------------
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, undefined, initState);
+  const [state, dispatch] = useReducer(reducer, initialState);
 
   useEffect(() => {
-    saveToStorage(state);
-  }, [state.sessions, state.persona]);
+    const loaded = loadFromStorage();
+    dispatch({ type: "LOAD_SESSION", payload: loaded });
+  }, []);
+
+  useEffect(() => {
+    if (!state.isHydrated) return;
+    // アクティブセッションの進行中メッセージをマージしてから保存
+    const sessionsToSave = { ...state.sessions };
+    if (state.activeSessionId && sessionsToSave[state.activeSessionId]) {
+      sessionsToSave[state.activeSessionId] = {
+        ...sessionsToSave[state.activeSessionId],
+        messages: state.messages,
+        examMessages: state.examMessages,
+        examRallyCount: state.examRallyCount,
+        examResult: state.examResult ?? null,
+        updatedAt: new Date().toISOString(),
+      };
+    }
+    saveToStorage({ ...state, sessions: sessionsToSave });
+  }, [
+    state.isHydrated,
+    state.sessions,
+    state.messages,
+    state.examMessages,
+    state.examRallyCount,
+    state.examResult,
+    state.persona,
+    state.activeSessionId,
+  ]);
 
   return (
     <AppContext.Provider value={{ state, dispatch }}>
