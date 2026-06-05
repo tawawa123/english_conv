@@ -119,7 +119,13 @@ export default function Home() {
   const [dark, setDark] = useState(false);
 
   useEffect(() => {
+    const saved = localStorage.getItem("theme");
+    if (saved === "dark") setDark(true);
+  }, []);
+
+  useEffect(() => {
     document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+    localStorage.setItem("theme", dark ? "dark" : "light");
   }, [dark]);
 
   function goToSession(id: string) {
