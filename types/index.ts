@@ -7,6 +7,7 @@ export type Message = {
   role: MessageRole;
   content: string;
   timestamp: Date;
+  advice?: string;
 };
 
 export type ExamResult = {

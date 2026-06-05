@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer } from "react";
+import { createContext, useContext, useReducer, useEffect } from "react";
 import type { Dispatch, ReactNode } from "react";
 import type {
   AppMode,
@@ -53,7 +53,8 @@ type AppAction =
   | { type: "SWITCH_SESSION"; payload: { id: string } }
   | { type: "DELETE_SESSION"; payload: { id: string } }
   | { type: "SAVE_SESSION" }
-  | { type: "LOAD_SESSION"; payload: { sessions: Record<string, Session> } };
+  | { type: "LOAD_SESSION"; payload: { sessions: Record<string, Session> } }
+  | { type: "SAVE_ADVICE"; payload: { id: string; advice: string } };
 
 // ---------------------------------------------------------------------------
 // Reducer
@@ -202,9 +203,75 @@ function reducer(state: AppState, action: AppAction): AppState {
     case "LOAD_SESSION":
       return { ...state, sessions: action.payload.sessions };
 
+    case "SAVE_ADVICE": {
+      const { id, advice } = action.payload;
+      return {
+        ...state,
+        messages: state.messages.map((m) =>
+          m.id === id ? { ...m, advice } : m
+        ),
+      };
+    }
+
     default:
       return state;
   }
+}
+
+// ---------------------------------------------------------------------------
+// localStorage persistence
+// ---------------------------------------------------------------------------
+
+const STORAGE_KEY = "english_conv_state";
+
+type PersistedState = {
+  sessions: Record<string, Session & { messages: (Omit<Message, "timestamp"> & { timestamp: string })[] }>;
+  persona: PersonaSettings;
+};
+
+function deserializeMessages(
+  msgs: (Omit<Message, "timestamp"> & { timestamp: string })[]
+): Message[] {
+  return msgs.map((m) => ({ ...m, timestamp: new Date(m.timestamp) }));
+}
+
+function loadFromStorage(): Pick<AppState, "sessions" | "persona"> {
+  if (typeof window === "undefined") return { sessions: {}, persona: { prompt: "" } };
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return { sessions: {}, persona: { prompt: "" } };
+    const parsed = JSON.parse(raw) as PersistedState;
+    const sessions: Record<string, Session> = {};
+    for (const [id, s] of Object.entries(parsed.sessions ?? {})) {
+      sessions[id] = {
+        ...s,
+        messages: deserializeMessages(s.messages ?? []),
+        examMessages: deserializeMessages(
+          (s as unknown as { examMessages: (Omit<Message, "timestamp"> & { timestamp: string })[] }).examMessages ?? []
+        ),
+      };
+    }
+    return { sessions, persona: parsed.persona ?? { prompt: "" } };
+  } catch {
+    return { sessions: {}, persona: { prompt: "" } };
+  }
+}
+
+function saveToStorage(state: AppState): void {
+  if (typeof window === "undefined") return;
+  try {
+    const toSave: Pick<PersistedState, "persona"> & { sessions: Record<string, Session> } = {
+      sessions: state.sessions,
+      persona: state.persona,
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
+  } catch {
+    // quota exceeded などの場合は無視
+  }
+}
+
+function initState(): AppState {
+  return { ...initialState, ...loadFromStorage() };
 }
 
 // ---------------------------------------------------------------------------
@@ -223,7 +290,12 @@ const AppContext = createContext<AppContextValue | null>(null);
 // ---------------------------------------------------------------------------
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, dispatch] = useReducer(reducer, initialState);
+  const [state, dispatch] = useReducer(reducer, undefined, initState);
+
+  useEffect(() => {
+    saveToStorage(state);
+  }, [state.sessions, state.persona]);
+
   return (
     <AppContext.Provider value={{ state, dispatch }}>
       {children}

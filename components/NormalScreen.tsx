@@ -10,11 +10,15 @@ import type { ApiMessage, Message } from "@/types";
 // ─── EvalPopup ───────────────────────────────────────────────────
 
 function EvalPopup({ msg, onClose }: { msg: Message; onClose: () => void }) {
-  const [advice, setAdvice] = useState("");
-  const [loading, setLoading] = useState(true);
+  const { dispatch } = useApp();
+  const [advice, setAdvice] = useState(msg.advice ?? "");
+  const [loading, setLoading] = useState(!msg.advice);
   const [error, setError] = useState("");
 
+  // 発話アドバイスは一度取得したら再評価しない 
   useEffect(() => {
+    if (msg.advice) return;
+    // APIに評価をリクエスト
     fetch("/api/support", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -22,14 +26,19 @@ function EvalPopup({ msg, onClose }: { msg: Message; onClose: () => void }) {
     })
       .then((r) => r.json())
       .then((data: { reply?: string; error?: string }) => {
-        if (data.reply) setAdvice(data.reply);
-        else throw new Error(data.error ?? "取得に失敗しました。");
+        // 成功したらアドバイスを保存して状態を更新
+        if (data.reply) {
+          setAdvice(data.reply);
+          dispatch({ type: "SAVE_ADVICE", payload: { id: msg.id, advice: data.reply } });
+        } else {
+          throw new Error(data.error ?? "取得に失敗しました。");
+        }
       })
       .catch((err: unknown) => {
         setError(err instanceof Error ? err.message : "エラーが発生しました。");
       })
       .finally(() => setLoading(false));
-  }, [msg.content]);
+  }, [msg.id, msg.advice, msg.content, dispatch]);
 
   return (
     <div
