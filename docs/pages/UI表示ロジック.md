@@ -10,45 +10,56 @@
 
 ## 主要ファイル
 
-- `index.tsx` — メイン画面のエントリ。`AppProvider` を使ってアプリをラップし、`ExamBanner` と 2 カラムレイアウト（`ConversationPane` / `SupportPane`）を配置する。
-- `_app.tsx` — Next.js のアプリラッパー（必要に応じてグローバル CSS やプロバイダを設定）。
-- `_document.tsx` — HTML ドキュメントのカスタマイズ（フォントや meta 等）。
+- `index.tsx` — メイン画面のエントリ。ローカルの `route` ステートで `SessionScreen` / `NormalScreen` / `ExamScreen` を切り替える。`TopBar`（ブランドロゴ・パンくず・ダークモード切替）を常時表示。
+- `_app.tsx` — Next.js のアプリラッパー。`AppProvider` でアプリ全体をラップし、グローバル CSS を適用。
+- `_document.tsx` — HTML ドキュメントのカスタマイズ（Google Fonts: Schibsted Grotesk / Zen Kaku Gothic New / Newsreader）。
+
+## ルーティング
+
+`index.tsx` はファイルベースルーティングを使わず、ローカルステートで画面を切り替える。
+
+```typescript
+const [route, setRoute] = useState<'sessions' | 'normal' | 'exam'>('sessions');
+```
+
+- `sessions` → `SessionScreen`（デフォルト）
+- `normal` → `NormalScreen`
+- `exam` → `ExamScreen`
+
+セッション画面に戻る際は `dispatch({ type: 'SAVE_SESSION' })` を呼んでから遷移する。
 
 ## API ルート（`pages/api/`）
 
-サーバーサイドで AI と連携するエンドポイントやサポート機能を実装する場所です。現在の構成では以下が想定されています：
+サーバーサイドで AI（Gemini）と連携するエンドポイントを実装する。
 
-- `api/chat.ts` — 会話のやり取りを処理し、外部 AI サービス（Claude / OpenAI 等）と通信して返信を返す。`POST` で `messages` と `personaPrompt` を受け取り、生成された `reply` を返す。
-- `api/support.ts` — 例文提案（`suggest`）や日本語質問（`ask`）など、サポート系のリクエストを処理する。
-- `api/exam.ts` — Exam モード用のトピック生成、採点ロジック、フィードバック生成などを扱う。
-
-セッション API（推奨）:
-
-- `api/sessions.ts` — セッションの一覧取得・保存・削除・インポート／エクスポートを扱うエンドポイントを設けると、クライアントとサーバーでセッション永続化を安定して扱える。
+- `api/chat.ts` — 会話のやり取りを処理し、Gemini API と通信して返信を返す。`POST` で `messages: ApiMessage[]` と `personaPrompt?: string` を受け取り、`{ reply: string }` を返す。
+- `api/support.ts` — サポート系リクエストを処理する。`action` フィールドで処理を切り替える：
+  - `suggest`：直前の AI 発話に対する返答例を4件生成。
+  - `ask`：日本語での質問に日本語で回答（Markdown 形式）。
+  - `evaluate`：ユーザーの発話を文法・語彙・自然さ・改善例の観点で評価（Markdown 形式）。
+- `api/exam.ts` — Exam モード用の採点を行う。`POST` で `{ action: "score", messages: ApiMessage[], topic: string }` を受け取り、`{ score: number, feedback: string }` を返す。
 
 実装上の注意:
 
-- API ハンドラは外部 AI クライアントのキーや設定を環境変数（`.env`）で参照すること。キーはリポジトリに含めない。
-- 長時間の処理や非同期ジョブはキューやワーカーで切り分けることを検討する。
-- エラー時は適切な HTTP ステータスと JSON エラーメッセージを返す。
+- API ハンドラは Gemini API キーを環境変数 `GEMINI_API_KEY`（`.env.local`）で参照する。キーはリポジトリに含めない。
+- エラー時は適切な HTTP ステータスと `{ error: string }` 形式の JSON を返す。
 
 ## UI とページの役割
 
-- `index.tsx` の `Layout` は以下を提供する：
-  - `ExamBanner`（`state.mode === 'exam'` のとき表示）
-  - メイン領域で `ConversationPane`（左）と `SupportPane`（右）と `SessionPane`（任意位置）を並列表示
-  - `state.examResult` が存在する場合は `ConversationPane` の代わりに `ExamResult` を表示するか、モーダルで重ね表示する設計を推奨する。
+- `index.tsx` の `TopBar` はブランドロゴ・現在のセッション名（パンくず）・ダークモードトグルを表示する。
+- 画面遷移の起点は `SessionScreen`。セッション選択または新規作成で `NormalScreen` か `ExamScreen` へ移動する。
+- Exam 終了後の結果は `ExamScreen` 内の `ExamResultView` で表示する（`state.examResult` が非 null のとき）。
 - 各ページ・コンポーネントはプレゼンテーションとロジックを分離し、API 呼び出しや副作用はフックや `pages/api` を通じて行う。
 
 ## テスト
 
 - `pages/api` のユニットテストは HTTP リクエストの入力と期待される JSON 出力を検証する。
-- `index.tsx` のレンダリングや `ExamBanner` の表示条件は簡単なレンダリングテストで確認する。
+- `index.tsx` のルート切替ロジックと `TopBar` の表示条件は簡単なレンダリングテストで確認する。
 
 ## デプロイ上の注意
 
 - Vercel を使う場合、`pages/api` はそのままサーバーレス関数としてデプロイされる。
-- 外部 AI API キーは Vercel の環境変数に設定する。
+- `GEMINI_API_KEY` は Vercel の環境変数ダッシュボードに設定する。
 
 ## 使い方（開発時）
 
