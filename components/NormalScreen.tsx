@@ -1,14 +1,8 @@
 import { useState, useRef, useEffect, KeyboardEvent } from "react";
 import { useApp } from "@/context/AppContext";
-import { Icon, TypingDots, ModeChip } from "@/components/Icons";
-import {
-  makeMessage,
-  aiReply,
-  clockTime,
-  SUGGESTIONS,
-  askAnswer,
-} from "@/lib/utils";
-import type { Message } from "@/types";
+import { Icon, TypingDots, ModeChip, Spinner } from "@/components/Icons";
+import { makeMessage, clockTime } from "@/lib/utils";
+import type { ApiMessage, Message } from "@/types";
 
 // ─── Message bubble ─────────────────────────────────────────────
 
@@ -44,9 +38,7 @@ function Bubble({ msg }: { msg: Message }) {
           style={{
             fontSize: 10.5,
             marginTop: 5,
-            color: isUser
-              ? "rgba(255,255,255,.6)"
-              : "var(--ink-faint)",
+            color: isUser ? "rgba(255,255,255,.6)" : "var(--ink-faint)",
             textAlign: "right",
           }}
         >
@@ -72,15 +64,37 @@ function ConversationPane() {
 
   async function sendMessage(content: string) {
     if (!content.trim() || state.isLoading) return;
+
     const userMsg = makeMessage("user", content.trim());
     dispatch({ type: "ADD_MESSAGE", payload: userMsg });
     dispatch({ type: "SET_LOADING", payload: true });
     setText("");
 
-    await new Promise((r) => setTimeout(r, 900 + Math.random() * 600));
-    const reply = aiReply("normal");
-    dispatch({ type: "ADD_MESSAGE", payload: makeMessage("assistant", reply) });
-    dispatch({ type: "SET_LOADING", payload: false });
+    const apiMessages: ApiMessage[] = [...state.messages, userMsg].map((m) => ({
+      role: m.role,
+      content: m.content,
+    }));
+
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: apiMessages,
+          personaPrompt: state.persona.prompt || undefined,
+        }),
+      });
+      const data = await res.json() as { reply?: string; error?: string };
+      if (!res.ok || !data.reply) {
+        throw new Error(data.error ?? "AIからの返答取得に失敗しました。");
+      }
+      dispatch({ type: "ADD_MESSAGE", payload: makeMessage("assistant", data.reply) });
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "不明なエラーが発生しました。";
+      dispatch({ type: "ADD_MESSAGE", payload: makeMessage("assistant", `[エラー] ${msg}`) });
+    } finally {
+      dispatch({ type: "SET_LOADING", payload: false });
+    }
   }
 
   function handleKeyDown(e: KeyboardEvent<HTMLTextAreaElement>) {
@@ -93,7 +107,6 @@ function ConversationPane() {
   function toggleRecording() {
     if (isRecording) {
       setIsRecording(false);
-      // STT simulation: insert sample text
       import("@/lib/utils").then(({ randStt }) => {
         setText((t) => (t ? t + " " : "") + randStt());
         textareaRef.current?.focus();
@@ -113,7 +126,6 @@ function ConversationPane() {
         overflow: "hidden",
       }}
     >
-      {/* Messages */}
       <div
         style={{
           flex: 1,
@@ -162,7 +174,6 @@ function ConversationPane() {
         <div ref={bottomRef} />
       </div>
 
-      {/* Composer */}
       <div
         style={{
           padding: "12px 16px",
@@ -173,7 +184,6 @@ function ConversationPane() {
           gap: 10,
         }}
       >
-        {/* Mic button */}
         <button
           onClick={toggleRecording}
           style={{
@@ -232,8 +242,7 @@ function ConversationPane() {
             height: 38,
             borderRadius: "var(--r-md)",
             border: "none",
-            background:
-              text.trim() && !state.isLoading ? "var(--accent)" : "var(--line)",
+            background: text.trim() && !state.isLoading ? "var(--accent)" : "var(--line)",
             color: text.trim() && !state.isLoading ? "#fff" : "var(--ink-faint)",
             display: "flex",
             alignItems: "center",
@@ -251,15 +260,35 @@ function ConversationPane() {
 // ─── SupportPane ─────────────────────────────────────────────────
 
 type SupportTab = "persona" | "suggest" | "ask";
+type Suggestion = { en: string; ja: string };
+
+function parseSuggestions(raw: string): Suggestion[] {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.includes("EN:") && line.includes("JA:"))
+    .map((line) => {
+      const [enPart, jaPart] = line.split("|");
+      return {
+        en: (enPart ?? "").replace(/^EN:\s*/i, "").trim(),
+        ja: (jaPart ?? "").replace(/^JA:\s*/i, "").trim(),
+      };
+    })
+    .filter((s) => s.en && s.ja);
+}
 
 function SupportPane() {
   const { state, dispatch } = useApp();
   const [tab, setTab] = useState<SupportTab>("suggest");
   const [personaText, setPersonaText] = useState(state.persona.prompt);
   const [personaSaved, setPersonaSaved] = useState(false);
-  const [suggestions] = useState(SUGGESTIONS);
+  const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
+  const [suggestLoading, setSuggestLoading] = useState(false);
+  const [suggestError, setSuggestError] = useState("");
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState("");
+  const [askLoading, setAskLoading] = useState(false);
+  const [askError, setAskError] = useState("");
 
   function savePersona() {
     dispatch({ type: "SET_PERSONA", payload: { prompt: personaText } });
@@ -267,9 +296,49 @@ function SupportPane() {
     setTimeout(() => setPersonaSaved(false), 1800);
   }
 
-  function handleAsk() {
+  async function fetchSuggestions() {
+    const lastAiMsg = [...state.messages].reverse().find((m) => m.role === "assistant");
+    if (!lastAiMsg) {
+      setSuggestError("まずAIと会話してください。");
+      return;
+    }
+    setSuggestLoading(true);
+    setSuggestError("");
+    try {
+      const res = await fetch("/api/support", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "suggest", lastAiMessage: lastAiMsg.content }),
+      });
+      const data = await res.json() as { reply?: string; error?: string };
+      if (!res.ok || !data.reply) throw new Error(data.error ?? "取得に失敗しました。");
+      setSuggestions(parseSuggestions(data.reply));
+    } catch (err: unknown) {
+      setSuggestError(err instanceof Error ? err.message : "エラーが発生しました。");
+    } finally {
+      setSuggestLoading(false);
+    }
+  }
+
+  async function handleAsk() {
     if (!question.trim()) return;
-    setAnswer(askAnswer(question));
+    setAskLoading(true);
+    setAskError("");
+    setAnswer("");
+    try {
+      const res = await fetch("/api/support", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "ask", question }),
+      });
+      const data = await res.json() as { reply?: string; error?: string };
+      if (!res.ok || !data.reply) throw new Error(data.error ?? "回答取得に失敗しました。");
+      setAnswer(data.reply);
+    } catch (err: unknown) {
+      setAskError(err instanceof Error ? err.message : "エラーが発生しました。");
+    } finally {
+      setAskLoading(false);
+    }
   }
 
   const tabs: { id: SupportTab; label: string; icon: Parameters<typeof Icon>[0]["name"] }[] = [
@@ -290,14 +359,7 @@ function SupportPane() {
         overflow: "hidden",
       }}
     >
-      {/* Tab bar */}
-      <div
-        style={{
-          display: "flex",
-          borderBottom: "1px solid var(--line)",
-          padding: "0 4px",
-        }}
-      >
+      <div style={{ display: "flex", borderBottom: "1px solid var(--line)", padding: "0 4px" }}>
         {tabs.map((t) => (
           <button
             key={t.id}
@@ -316,7 +378,6 @@ function SupportPane() {
               flexDirection: "column",
               alignItems: "center",
               gap: 4,
-              letterSpacing: ".01em",
             }}
           >
             <Icon name={t.icon} size={15} />
@@ -325,38 +386,67 @@ function SupportPane() {
         ))}
       </div>
 
-      {/* Tab content */}
       <div style={{ flex: 1, overflowY: "auto", padding: 16 }}>
 
         {tab === "suggest" && (
           <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            <p style={{ margin: "0 0 6px", fontSize: 12, color: "var(--ink-soft)" }}>
-              使えそうな表現をクリックしてコピー
-            </p>
-            {suggestions.map((s, i) => (
-              <button
-                key={i}
-                onClick={() => navigator.clipboard?.writeText(s.en)}
-                style={{
-                  padding: "12px 14px",
-                  borderRadius: "var(--r-md)",
-                  border: "1px solid var(--line)",
-                  background: "var(--surface-2)",
-                  textAlign: "left",
-                  cursor: "pointer",
-                  display: "flex",
-                  flexDirection: "column",
-                  gap: 5,
-                }}
-              >
-                <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)", lineHeight: 1.4 }}>
-                  {s.en}
-                </span>
-                <span style={{ fontSize: 11.5, color: "var(--ink-faint)", fontFamily: "var(--font-jp)" }}>
-                  {s.ja}
-                </span>
-              </button>
-            ))}
+            <button
+              onClick={fetchSuggestions}
+              disabled={suggestLoading}
+              style={{
+                padding: "8px 0",
+                borderRadius: "var(--r-md)",
+                border: "none",
+                background: suggestLoading ? "var(--line)" : "var(--accent)",
+                color: suggestLoading ? "var(--ink-faint)" : "#fff",
+                fontWeight: 700,
+                fontSize: 13,
+                cursor: suggestLoading ? "default" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
+              }}
+            >
+              {suggestLoading ? <Spinner size={14} color="#fff" /> : <Icon name="sparkle" size={14} />}
+              {suggestLoading ? "取得中…" : "返答例を取得"}
+            </button>
+
+            {suggestError && (
+              <span style={{ fontSize: 12, color: "var(--danger)" }}>{suggestError}</span>
+            )}
+
+            {suggestions.length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <p style={{ margin: "0 0 2px", fontSize: 12, color: "var(--ink-soft)" }}>
+                  クリックしてコピー
+                </p>
+                {suggestions.map((s, i) => (
+                  <button
+                    key={i}
+                    onClick={() => navigator.clipboard?.writeText(s.en)}
+                    style={{
+                      padding: "12px 14px",
+                      borderRadius: "var(--r-md)",
+                      border: "1px solid var(--line)",
+                      background: "var(--surface-2)",
+                      textAlign: "left",
+                      cursor: "pointer",
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 5,
+                    }}
+                  >
+                    <span style={{ fontSize: 13, fontWeight: 600, color: "var(--ink)", lineHeight: 1.4 }}>
+                      {s.en}
+                    </span>
+                    <span style={{ fontSize: 11.5, color: "var(--ink-faint)", fontFamily: "var(--font-jp)" }}>
+                      {s.ja}
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
 
@@ -384,20 +474,30 @@ function SupportPane() {
             />
             <button
               onClick={handleAsk}
-              disabled={!question.trim()}
+              disabled={!question.trim() || askLoading}
               style={{
                 padding: "9px 0",
                 borderRadius: "var(--r-md)",
                 border: "none",
-                background: question.trim() ? "var(--accent)" : "var(--line)",
-                color: question.trim() ? "#fff" : "var(--ink-faint)",
+                background: question.trim() && !askLoading ? "var(--accent)" : "var(--line)",
+                color: question.trim() && !askLoading ? "#fff" : "var(--ink-faint)",
                 fontWeight: 700,
                 fontSize: 13,
-                cursor: question.trim() ? "pointer" : "default",
+                cursor: question.trim() && !askLoading ? "pointer" : "default",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 6,
               }}
             >
-              質問する
+              {askLoading ? <Spinner size={14} color="#fff" /> : null}
+              {askLoading ? "回答中…" : "質問する"}
             </button>
+
+            {askError && (
+              <span style={{ fontSize: 12, color: "var(--danger)" }}>{askError}</span>
+            )}
+
             {answer && (
               <div
                 style={{
@@ -478,7 +578,6 @@ export default function NormalScreen() {
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      {/* Session info bar */}
       {activeSession && (
         <div
           style={{
@@ -498,8 +597,6 @@ export default function NormalScreen() {
           )}
         </div>
       )}
-
-      {/* Main layout */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         <ConversationPane />
         <SupportPane />

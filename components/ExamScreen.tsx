@@ -1,8 +1,8 @@
 import { useState, useRef, useEffect } from "react";
 import { useApp } from "@/context/AppContext";
-import { Icon, TypingDots, ModeChip } from "@/components/Icons";
-import { makeMessage, aiReply, scoreExam, clockTime, randStt } from "@/lib/utils";
-import type { Message } from "@/types";
+import { Icon, TypingDots, ModeChip, Spinner } from "@/components/Icons";
+import { makeMessage, clockTime, randStt } from "@/lib/utils";
+import type { ApiMessage, Message } from "@/types";
 
 const MAX_RALLY = 10;
 
@@ -52,16 +52,14 @@ function RallyRing({ count, max }: { count: number; max: number }) {
 
 function ScoreGauge({ score }: { score: number }) {
   const r = 52;
-  const circ = Math.PI * r; // half circle
+  const circ = Math.PI * r;
   const pct = score / 100;
-
   const color =
     score >= 85 ? "var(--success)" : score >= 70 ? "var(--accent)" : "var(--warm)";
 
   return (
     <div style={{ position: "relative", width: 140, height: 76 }}>
       <svg width={140} height={76} viewBox="0 0 140 76">
-        {/* Background arc */}
         <path
           d={`M 14 70 A ${r} ${r} 0 0 1 126 70`}
           fill="none"
@@ -69,7 +67,6 @@ function ScoreGauge({ score }: { score: number }) {
           strokeWidth={10}
           strokeLinecap="round"
         />
-        {/* Filled arc */}
         <path
           d={`M 14 70 A ${r} ${r} 0 0 1 126 70`}
           fill="none"
@@ -206,7 +203,16 @@ function ExamTranscript({ messages }: { messages: Message[] }) {
       >
         TRANSCRIPT
       </div>
-      <div style={{ flex: 1, overflowY: "auto", padding: "10px 12px", display: "flex", flexDirection: "column", gap: 8 }}>
+      <div
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          padding: "10px 12px",
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
         {messages.length === 0 ? (
           <span style={{ fontSize: 12, color: "var(--ink-faint)", marginTop: 8 }}>
             まだ発話がありません
@@ -219,8 +225,7 @@ function ExamTranscript({ messages }: { messages: Message[] }) {
                   fontSize: 10,
                   fontWeight: 700,
                   letterSpacing: ".06em",
-                  color:
-                    m.role === "user" ? "var(--accent-strong)" : "var(--warm-strong)",
+                  color: m.role === "user" ? "var(--accent-strong)" : "var(--warm-strong)",
                 }}
               >
                 {m.role === "user" ? "YOU" : "AI"} · {clockTime(m.timestamp)}
@@ -242,6 +247,7 @@ function VoiceStage({ topic }: { topic: string }) {
   const { state, dispatch } = useApp();
   const [isRecording, setIsRecording] = useState(false);
   const [aiSpeaking, setAiSpeaking] = useState(false);
+  const [error, setError] = useState("");
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -253,25 +259,61 @@ function VoiceStage({ topic }: { topic: string }) {
   async function handleMicToggle() {
     if (isRecording) {
       setIsRecording(false);
+      setError("");
+
       const transcript = randStt();
       const userMsg = makeMessage("user", transcript);
       dispatch({ type: "ADD_EXAM_MESSAGE", payload: userMsg });
+      const newCount = state.examRallyCount + 1;
       dispatch({ type: "INCREMENT_RALLY" });
 
-      if (state.examRallyCount + 1 >= MAX_RALLY) {
+      if (newCount >= MAX_RALLY) {
         dispatch({ type: "SET_LOADING", payload: true });
-        await new Promise((r) => setTimeout(r, 800));
-        const result = scoreExam();
-        dispatch({ type: "SET_EXAM_RESULT", payload: result });
-        dispatch({ type: "SET_LOADING", payload: false });
+        try {
+          const allMessages: ApiMessage[] = [...state.examMessages, userMsg].map((m) => ({
+            role: m.role,
+            content: m.content,
+          }));
+          const res = await fetch("/api/exam", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "score", messages: allMessages, topic }),
+          });
+          const data = await res.json() as { score?: number; feedback?: string; error?: string };
+          if (!res.ok || data.score === undefined || !data.feedback) {
+            throw new Error(data.error ?? "採点に失敗しました。");
+          }
+          dispatch({ type: "SET_EXAM_RESULT", payload: { score: data.score, feedback: data.feedback } });
+        } catch (err: unknown) {
+          setError(err instanceof Error ? err.message : "採点中にエラーが発生しました。");
+        } finally {
+          dispatch({ type: "SET_LOADING", payload: false });
+        }
         return;
       }
 
       setAiSpeaking(true);
-      await new Promise((r) => setTimeout(r, 1000 + Math.random() * 600));
-      const reply = aiReply("exam");
-      dispatch({ type: "ADD_EXAM_MESSAGE", payload: makeMessage("assistant", reply) });
-      setAiSpeaking(false);
+      try {
+        const apiMessages: ApiMessage[] = [...state.examMessages, userMsg].map((m) => ({
+          role: m.role,
+          content: m.content,
+        }));
+        const res = await fetch("/api/chat", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            messages: apiMessages,
+            personaPrompt: `You are conducting an English speaking exam. The topic is: "${topic}". Ask short, natural follow-up questions to keep the conversation going. Keep your responses to 1-2 sentences.`,
+          }),
+        });
+        const data = await res.json() as { reply?: string; error?: string };
+        if (!res.ok || !data.reply) throw new Error(data.error ?? "返答取得に失敗しました。");
+        dispatch({ type: "ADD_EXAM_MESSAGE", payload: makeMessage("assistant", data.reply) });
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : "エラーが発生しました。");
+      } finally {
+        setAiSpeaking(false);
+      }
     } else {
       setIsRecording(true);
     }
@@ -291,7 +333,6 @@ function VoiceStage({ topic }: { topic: string }) {
         overflow: "hidden",
       }}
     >
-      {/* Topic card */}
       <div
         style={{
           padding: "14px 22px",
@@ -311,10 +352,8 @@ function VoiceStage({ topic }: { topic: string }) {
         </span>
       </div>
 
-      {/* Rally ring */}
       <RallyRing count={state.examRallyCount} max={MAX_RALLY} />
 
-      {/* AI speaking indicator */}
       {aiSpeaking && (
         <div style={{ display: "flex", alignItems: "center", gap: 8, animation: "fadeIn .2s ease" }}>
           <Icon name="waveform" size={16} style={{ color: "var(--warm)" }} />
@@ -323,16 +362,20 @@ function VoiceStage({ topic }: { topic: string }) {
         </div>
       )}
 
-      {/* Loading indicator */}
       {state.isLoading && (
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <Spinner size={16} color="var(--ink-soft)" />
           <span style={{ fontSize: 13, color: "var(--ink-soft)" }}>採点中…</span>
-          <TypingDots />
         </div>
       )}
 
-      {/* Mic button */}
-      {!isComplete && !state.isLoading && (
+      {error && (
+        <span style={{ fontSize: 13, color: "var(--danger)", textAlign: "center" }}>
+          {error}
+        </span>
+      )}
+
+      {!isComplete && !state.isLoading && !aiSpeaking && (
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
           <button
             onClick={handleMicToggle}
@@ -373,7 +416,6 @@ export default function ExamScreen() {
     ? state.sessions[state.activeSessionId]
     : null;
   const topic = activeSession?.examTopic ?? "Your weekend routine";
-
   const hasResult = state.examResult !== null;
 
   function handleRetry() {
@@ -382,7 +424,6 @@ export default function ExamScreen() {
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-      {/* Info bar */}
       <div
         style={{
           padding: "8px 16px",
@@ -407,7 +448,6 @@ export default function ExamScreen() {
         )}
       </div>
 
-      {/* Main area */}
       <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
         {hasResult ? (
           <ExamResultView onRetry={handleRetry} />
