@@ -28,13 +28,15 @@
 - 送信: Enter キー（Shift+Enter で改行）または送信ボタン。
 - `/api/chat` へ `messages`（`ApiMessage[]`）と `personaPrompt` を POST し、返答を `ADD_MESSAGE` で追加。
 - STT エラーはメッセージ一覧上部にインライン表示。
+- AI の返答バブルをクリックすると `ttsStop()` 後に `ttsSpeak()` で再読み上げ（TTS 未対応時は無効）。
 
 #### 内部コンポーネント: `EvalPopup`
 - ユーザーのメッセージバブルをクリックすると表示されるポップアップ。
 - `/api/support { action: "evaluate" }` を呼び出し、文法・語彙・自然さ・改善例を Markdown 形式で表示。
 
 #### 内部コンポーネント: `SupportPane`
-- 右側固定幅（300px）のサイドパネル。3タブ構成。
+- 右側サイドパネル（デフォルト 300px、200〜500px でドラッグリサイズ可能）。3タブ構成。
+- `ConversationPane` との境界に縦ディバイダーを配置。`onMouseDown` で幅を動的に変更する。
   - **例文タブ**: ボタンを押すと `/api/support { action: "suggest" }` を呼び、直前の AI 発話に対する返答例を取得。
   - **質問タブ**: 日本語で質問を入力し `/api/support { action: "ask" }` を呼ぶ。回答は Markdown レンダリング（`react-markdown`）。
   - **ペルソナタブ**: AI に渡すシステムプロンプトを編集・保存（`SET_PERSONA`）。
