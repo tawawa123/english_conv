@@ -4,6 +4,7 @@ import { Icon, TypingDots, ModeChip, Spinner } from "@/components/Icons";
 import { makeMessage, clockTime } from "@/lib/utils";
 import { sttStart, sttStop, isSttSupported } from "@/services/stt";
 import { ttsSpeak, isTtsSupported } from "@/services/tts";
+import ReactMarkdown from "react-markdown";
 import type { ApiMessage, Message } from "@/types";
 
 // ─── Message bubble ─────────────────────────────────────────────
@@ -555,8 +556,9 @@ function SupportPane() {
                   fontFamily: "var(--font-jp)",
                   animation: "slideUp .2s ease",
                 }}
+                className="md-answer"
               >
-                {answer}
+                <ReactMarkdown>{answer}</ReactMarkdown>
               </div>
             )}
           </div>

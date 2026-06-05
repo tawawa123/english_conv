@@ -102,3 +102,19 @@ input, textarea, select { font-family: inherit; }
 @keyframes spin     { to { transform: rotate(360deg); } }
 
 .dotpulse span { animation: barDance 1s infinite ease-in-out; }
+
+/* ─── Markdown answer rendering ───────────────────────────────── */
+.md-answer > * { margin: 0; }
+.md-answer > * + * { margin-top: 8px; }
+.md-answer p { line-height: 1.65; }
+.md-answer strong { font-weight: 700; }
+.md-answer em { font-style: italic; }
+.md-answer ul, .md-answer ol { padding-left: 18px; display: flex; flex-direction: column; gap: 4px; }
+.md-answer li { line-height: 1.55; }
+.md-answer code {
+  font-family: ui-monospace, monospace;
+  font-size: .9em;
+  background: color-mix(in oklab, var(--accent) 10%, transparent);
+  padding: 1px 5px;
+  border-radius: 4px;
+}

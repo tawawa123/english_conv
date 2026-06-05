@@ -22,9 +22,13 @@ export async function sendChat(
   try {
     const ai = getClient();
 
+    // システムプロンプトの基本ルールを定義
+    const BASE_RULES =
+      "Always respond in English only, regardless of what language the user writes in. " +
+      "Keep your response to 2-3 sentences maximum.";
     const systemInstruction = personaPrompt?.trim()
-      ? personaPrompt.trim()
-      : "You are a friendly English conversation partner. Keep responses concise and natural.";
+      ? `${personaPrompt.trim()}\n\n${BASE_RULES}`
+      : `You are a friendly English conversation partner. ${BASE_RULES}`;
 
     // Gemini の history は最後のユーザーメッセージを除いた部分
     const history = messages.slice(0, -1).map((m) => ({
