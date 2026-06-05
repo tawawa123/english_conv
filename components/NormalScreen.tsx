@@ -3,6 +3,7 @@ import { useApp } from "@/context/AppContext";
 import { Icon, TypingDots, ModeChip, Spinner } from "@/components/Icons";
 import { makeMessage, clockTime } from "@/lib/utils";
 import { sttStart, sttStop, isSttSupported } from "@/services/stt";
+import { ttsSpeak, isTtsSupported } from "@/services/tts";
 import type { ApiMessage, Message } from "@/types";
 
 // ─── Message bubble ─────────────────────────────────────────────
@@ -95,7 +96,12 @@ function ConversationPane() {
       if (!res.ok || !data.reply) {
         throw new Error(data.error ?? "AIからの返答取得に失敗しました。");
       }
-      dispatch({ type: "ADD_MESSAGE", payload: makeMessage("assistant", data.reply) });
+      const replyMsg = makeMessage("assistant", data.reply);
+      dispatch({ type: "ADD_MESSAGE", payload: replyMsg });
+
+      if (isTtsSupported()) {
+        await ttsSpeak(data.reply);
+      }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : "不明なエラーが発生しました。";
       dispatch({ type: "ADD_MESSAGE", payload: makeMessage("assistant", `[エラー] ${msg}`) });
