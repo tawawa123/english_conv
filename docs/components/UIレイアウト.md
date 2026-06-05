@@ -32,7 +32,9 @@
 
 #### 内部コンポーネント: `EvalPopup`
 - ユーザーのメッセージバブルをクリックすると表示されるポップアップ。
-- `/api/support { action: "evaluate" }` を呼び出し、文法・語彙・自然さ・改善例を Markdown 形式で表示。
+- `msg.advice` が存在する場合はキャッシュを即時表示し、API 呼び出しをスキップする。
+- `msg.advice` が未設定の場合のみ `/api/support { action: "evaluate" }` を呼び出し、取得後に `SAVE_ADVICE` で `Message` に保存する。
+- 表示内容: 文法・語彙・自然さ・改善例（Markdown 形式）。
 
 #### 内部コンポーネント: `SupportPane`
 - 右側サイドパネル（デフォルト 300px、200〜500px でドラッグリサイズ可能）。3タブ構成。
