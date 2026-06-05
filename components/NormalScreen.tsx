@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, KeyboardEvent } from "react";
 import { useApp } from "@/context/AppContext";
 import { Icon, TypingDots, ModeChip, Spinner } from "@/components/Icons";
 import { makeMessage, clockTime } from "@/lib/utils";
+import { sttStart, sttStop, isSttSupported } from "@/services/stt";
 import type { ApiMessage, Message } from "@/types";
 
 // ─── Message bubble ─────────────────────────────────────────────
@@ -55,8 +56,14 @@ function ConversationPane() {
   const { state, dispatch } = useApp();
   const [text, setText] = useState("");
   const [isRecording, setIsRecording] = useState(false);
+  const [sttError, setSttError] = useState("");
+  const sttSupported = isSttSupported();
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    return () => sttStop();
+  }, []);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -105,14 +112,23 @@ function ConversationPane() {
   }
 
   function toggleRecording() {
+    setSttError("");
     if (isRecording) {
+      sttStop();
       setIsRecording(false);
-      import("@/lib/utils").then(({ randStt }) => {
-        setText((t) => (t ? t + " " : "") + randStt());
-        textareaRef.current?.focus();
-      });
     } else {
       setIsRecording(true);
+      sttStart({
+        onResult: (transcript) => {
+          setText((t) => (t ? t + " " : "") + transcript);
+          textareaRef.current?.focus();
+        },
+        onEnd: () => setIsRecording(false),
+        onError: (msg) => {
+          setIsRecording(false);
+          setSttError(msg);
+        },
+      });
     }
   }
 
@@ -136,6 +152,21 @@ function ConversationPane() {
           gap: 12,
         }}
       >
+        {sttError && (
+          <div
+            style={{
+              padding: "8px 12px",
+              borderRadius: "var(--r-md)",
+              background: "var(--danger-tint)",
+              border: "1px solid color-mix(in oklab, var(--danger) 25%, transparent)",
+              fontSize: 12,
+              color: "var(--danger)",
+              animation: "slideUp .15s ease",
+            }}
+          >
+            {sttError}
+          </div>
+        )}
         {state.messages.length === 0 && (
           <div
             style={{
@@ -184,26 +215,33 @@ function ConversationPane() {
           gap: 10,
         }}
       >
-        <button
-          onClick={toggleRecording}
-          style={{
-            flexShrink: 0,
-            width: 38,
-            height: 38,
-            borderRadius: "var(--r-md)",
-            border: "1px solid var(--line)",
-            background: isRecording ? "var(--danger)" : "var(--surface-2)",
-            color: isRecording ? "#fff" : "var(--ink-soft)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            animation: isRecording ? "pulseRing 1.4s infinite" : "none",
-          }}
-          title={isRecording ? "停止" : "音声入力"}
-        >
-          <Icon name={isRecording ? "stop" : "mic"} size={17} />
-        </button>
+        <div style={{ flexShrink: 0, display: "flex", flexDirection: "column", alignItems: "center", gap: 4 }}>
+          <button
+            onClick={toggleRecording}
+            disabled={!sttSupported}
+            style={{
+              width: 38,
+              height: 38,
+              borderRadius: "var(--r-md)",
+              border: "1px solid var(--line)",
+              background: isRecording ? "var(--danger)" : "var(--surface-2)",
+              color: isRecording ? "#fff" : sttSupported ? "var(--ink-soft)" : "var(--ink-faint)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: sttSupported ? "pointer" : "not-allowed",
+              animation: isRecording ? "pulseRing 1.4s infinite" : "none",
+            }}
+            title={!sttSupported ? "このブラウザは音声認識に対応していません" : isRecording ? "停止" : "音声入力"}
+          >
+            <Icon name={isRecording ? "stop" : "mic"} size={17} />
+          </button>
+          {sttError && (
+            <span style={{ fontSize: 10, color: "var(--danger)", maxWidth: 38, textAlign: "center", lineHeight: 1.3 }}>
+              ！
+            </span>
+          )}
+        </div>
 
         <textarea
           ref={textareaRef}

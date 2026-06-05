@@ -1,3 +1,40 @@
+// Web Speech API の型宣言（lib.dom に未収録のため手動定義）
+interface SpeechRecognitionResult {
+  readonly 0: SpeechRecognitionAlternative;
+  readonly length: number;
+}
+interface SpeechRecognitionAlternative {
+  readonly transcript: string;
+  readonly confidence: number;
+}
+interface SpeechRecognitionResultList {
+  readonly length: number;
+  item(index: number): SpeechRecognitionResult;
+  [index: number]: SpeechRecognitionResult;
+}
+interface SpeechRecognitionEvent extends Event {
+  readonly results: SpeechRecognitionResultList;
+}
+interface SpeechRecognitionErrorEvent extends Event {
+  readonly error: string;
+  readonly message: string;
+}
+interface SpeechRecognitionInstance extends EventTarget {
+  lang: string;
+  continuous: boolean;
+  interimResults: boolean;
+  maxAlternatives: number;
+  onresult: ((e: SpeechRecognitionEvent) => void) | null;
+  onend: (() => void) | null;
+  onerror: ((e: SpeechRecognitionErrorEvent) => void) | null;
+  start(): void;
+  stop(): void;
+  abort(): void;
+}
+type SpeechRecognitionConstructor = new () => SpeechRecognitionInstance;
+
+// ────────────────────────────────────────────────────────────────
+
 type SttCallbacks = {
   onResult: (transcript: string) => void;
   onEnd?: () => void;
@@ -13,20 +50,17 @@ const ERROR_MESSAGES: Record<string, string> = {
   "service-not-allowed": "音声認識サービスが許可されていません。",
 };
 
-function getRecognitionClass(): (new () => SpeechRecognition) | null {
+function getRecognitionClass(): SpeechRecognitionConstructor | null {
   if (typeof window === "undefined") return null;
-  return (
-    (window as unknown as { SpeechRecognition?: new () => SpeechRecognition }).SpeechRecognition ??
-    (window as unknown as { webkitSpeechRecognition?: new () => SpeechRecognition }).webkitSpeechRecognition ??
-    null
-  );
+  const w = window as unknown as Record<string, unknown>;
+  return (w["SpeechRecognition"] ?? w["webkitSpeechRecognition"] ?? null) as SpeechRecognitionConstructor | null;
 }
 
 export function isSttSupported(): boolean {
   return getRecognitionClass() !== null;
 }
 
-let current: SpeechRecognition | null = null;
+let current: SpeechRecognitionInstance | null = null;
 
 export function sttStart(callbacks: SttCallbacks): void {
   const RecognitionClass = getRecognitionClass();

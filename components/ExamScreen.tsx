@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect } from "react";
 import { useApp } from "@/context/AppContext";
 import { Icon, TypingDots, ModeChip, Spinner } from "@/components/Icons";
-import { makeMessage, clockTime, randStt } from "@/lib/utils";
+import { makeMessage, clockTime } from "@/lib/utils";
+import { sttStart, sttStop, isSttSupported } from "@/services/stt";
+import { ttsSpeak, ttsStop, isTtsSupported } from "@/services/tts";
 import type { ApiMessage, Message } from "@/types";
 
 const MAX_RALLY = 10;
@@ -248,74 +250,102 @@ function VoiceStage({ topic }: { topic: string }) {
   const [isRecording, setIsRecording] = useState(false);
   const [aiSpeaking, setAiSpeaking] = useState(false);
   const [error, setError] = useState("");
+  const sttSupported = isSttSupported();
+  const ttsSupported = isTtsSupported();
   const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [state.examMessages]);
 
+  useEffect(() => {
+    return () => {
+      sttStop();
+      ttsStop();
+    };
+  }, []);
+
   const isComplete = state.examRallyCount >= MAX_RALLY;
 
-  async function handleMicToggle() {
-    if (isRecording) {
-      setIsRecording(false);
-      setError("");
+  async function processUserTurn(transcript: string) {
+    setError("");
+    const userMsg = makeMessage("user", transcript);
+    dispatch({ type: "ADD_EXAM_MESSAGE", payload: userMsg });
+    const newCount = state.examRallyCount + 1;
+    dispatch({ type: "INCREMENT_RALLY" });
 
-      const transcript = randStt();
-      const userMsg = makeMessage("user", transcript);
-      dispatch({ type: "ADD_EXAM_MESSAGE", payload: userMsg });
-      const newCount = state.examRallyCount + 1;
-      dispatch({ type: "INCREMENT_RALLY" });
-
-      if (newCount >= MAX_RALLY) {
-        dispatch({ type: "SET_LOADING", payload: true });
-        try {
-          const allMessages: ApiMessage[] = [...state.examMessages, userMsg].map((m) => ({
-            role: m.role,
-            content: m.content,
-          }));
-          const res = await fetch("/api/exam", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ action: "score", messages: allMessages, topic }),
-          });
-          const data = await res.json() as { score?: number; feedback?: string; error?: string };
-          if (!res.ok || data.score === undefined || !data.feedback) {
-            throw new Error(data.error ?? "採点に失敗しました。");
-          }
-          dispatch({ type: "SET_EXAM_RESULT", payload: { score: data.score, feedback: data.feedback } });
-        } catch (err: unknown) {
-          setError(err instanceof Error ? err.message : "採点中にエラーが発生しました。");
-        } finally {
-          dispatch({ type: "SET_LOADING", payload: false });
-        }
-        return;
-      }
-
-      setAiSpeaking(true);
+    if (newCount >= MAX_RALLY) {
+      dispatch({ type: "SET_LOADING", payload: true });
       try {
-        const apiMessages: ApiMessage[] = [...state.examMessages, userMsg].map((m) => ({
+        const allMessages: ApiMessage[] = [...state.examMessages, userMsg].map((m) => ({
           role: m.role,
           content: m.content,
         }));
-        const res = await fetch("/api/chat", {
+        const res = await fetch("/api/exam", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            messages: apiMessages,
-            personaPrompt: `You are conducting an English speaking exam. The topic is: "${topic}". Ask short, natural follow-up questions to keep the conversation going. Keep your responses to 1-2 sentences.`,
-          }),
+          body: JSON.stringify({ action: "score", messages: allMessages, topic }),
         });
-        const data = await res.json() as { reply?: string; error?: string };
-        if (!res.ok || !data.reply) throw new Error(data.error ?? "返答取得に失敗しました。");
-        dispatch({ type: "ADD_EXAM_MESSAGE", payload: makeMessage("assistant", data.reply) });
+        const data = await res.json() as { score?: number; feedback?: string; error?: string };
+        if (!res.ok || data.score === undefined || !data.feedback) {
+          throw new Error(data.error ?? "採点に失敗しました。");
+        }
+        dispatch({ type: "SET_EXAM_RESULT", payload: { score: data.score, feedback: data.feedback } });
       } catch (err: unknown) {
-        setError(err instanceof Error ? err.message : "エラーが発生しました。");
+        setError(err instanceof Error ? err.message : "採点中にエラーが発生しました。");
       } finally {
-        setAiSpeaking(false);
+        dispatch({ type: "SET_LOADING", payload: false });
       }
+      return;
+    }
+
+    setAiSpeaking(true);
+    try {
+      const apiMessages: ApiMessage[] = [...state.examMessages, userMsg].map((m) => ({
+        role: m.role,
+        content: m.content,
+      }));
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: apiMessages,
+          personaPrompt: `You are conducting an English speaking exam. The topic is: "${topic}". Ask short, natural follow-up questions to keep the conversation going. Keep your responses to 1-2 sentences.`,
+        }),
+      });
+      const data = await res.json() as { reply?: string; error?: string };
+      if (!res.ok || !data.reply) throw new Error(data.error ?? "返答取得に失敗しました。");
+
+      dispatch({ type: "ADD_EXAM_MESSAGE", payload: makeMessage("assistant", data.reply) });
+
+      if (ttsSupported) {
+        await ttsSpeak(data.reply);
+      }
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "エラーが発生しました。");
+    } finally {
+      setAiSpeaking(false);
+    }
+  }
+
+  function handleMicToggle() {
+    if (isRecording) {
+      sttStop();
+      setIsRecording(false);
     } else {
+      setError("");
       setIsRecording(true);
+      sttStart({
+        onResult: (transcript) => {
+          setIsRecording(false);
+          processUserTurn(transcript);
+        },
+        onEnd: () => setIsRecording(false),
+        onError: (msg) => {
+          setIsRecording(false);
+          setError(msg);
+        },
+      });
     }
   }
 
@@ -379,26 +409,37 @@ function VoiceStage({ topic }: { topic: string }) {
         <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 12 }}>
           <button
             onClick={handleMicToggle}
+            disabled={!sttSupported}
             style={{
               width: 72,
               height: 72,
               borderRadius: "50%",
               border: "none",
-              background: isRecording ? "var(--danger)" : "var(--warm)",
+              background: !sttSupported ? "var(--line)" : isRecording ? "var(--danger)" : "var(--warm)",
               color: "#fff",
               display: "flex",
               alignItems: "center",
               justifyContent: "center",
-              cursor: "pointer",
-              boxShadow: "var(--shadow-md)",
+              cursor: sttSupported ? "pointer" : "not-allowed",
+              boxShadow: sttSupported ? "var(--shadow-md)" : "none",
               animation: isRecording ? "pulseRing 1.4s infinite" : "none",
             }}
+            title={!sttSupported ? "このブラウザは音声認識に対応していません" : undefined}
           >
             <Icon name={isRecording ? "stop" : "mic"} size={28} stroke={1.8} />
           </button>
           <span style={{ fontSize: 12, color: "var(--ink-faint)" }}>
-            {isRecording ? "タップして停止・送信" : "タップして話す"}
+            {!sttSupported
+              ? "音声認識が使えません"
+              : isRecording
+              ? "タップして停止・送信"
+              : "タップして話す"}
           </span>
+          {ttsSupported && !isRecording && (
+            <span style={{ fontSize: 11, color: "var(--ink-faint)" }}>
+              🔊 AIの返答は音声で読み上げられます
+            </span>
+          )}
         </div>
       )}
 
