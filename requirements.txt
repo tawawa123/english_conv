@@ -1,0 +1,9 @@
+# Node.js 仮想環境を pip で再現するためのパッケージ
+# 使い方:
+#   pip install -r requirements.txt
+#   nodeenv --node=18.20.5 env
+#   source env/bin/activate   # Windows: env\Scripts\activate.bat
+#   npm install
+#   npm run dev
+
+nodeenv==1.10.0
