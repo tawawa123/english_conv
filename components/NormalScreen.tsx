@@ -7,9 +7,115 @@ import { ttsSpeak, isTtsSupported } from "@/services/tts";
 import ReactMarkdown from "react-markdown";
 import type { ApiMessage, Message } from "@/types";
 
+// ─── EvalPopup ───────────────────────────────────────────────────
+
+function EvalPopup({ msg, onClose }: { msg: Message; onClose: () => void }) {
+  const [advice, setAdvice] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    fetch("/api/support", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: "evaluate", userMessage: msg.content }),
+    })
+      .then((r) => r.json())
+      .then((data: { reply?: string; error?: string }) => {
+        if (data.reply) setAdvice(data.reply);
+        else throw new Error(data.error ?? "取得に失敗しました。");
+      })
+      .catch((err: unknown) => {
+        setError(err instanceof Error ? err.message : "エラーが発生しました。");
+      })
+      .finally(() => setLoading(false));
+  }, [msg.content]);
+
+  return (
+    <div
+      onClick={(e) => e.target === e.currentTarget && onClose()}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(0,0,0,.45)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 100,
+        animation: "fadeIn .15s ease",
+      }}
+    >
+      <div
+        style={{
+          background: "var(--surface)",
+          borderRadius: "var(--r-xl)",
+          padding: 28,
+          width: 440,
+          maxHeight: "80vh",
+          overflowY: "auto",
+          boxShadow: "var(--shadow-lg)",
+          animation: "popIn .18s ease",
+          display: "flex",
+          flexDirection: "column",
+          gap: 16,
+        }}
+      >
+        {/* Header */}
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <Icon name="sparkle" size={17} style={{ color: "var(--accent)" }} />
+            <span style={{ fontWeight: 700, fontSize: 15 }}>発話アドバイス</span>
+          </div>
+          <button
+            onClick={onClose}
+            style={{ background: "none", border: "none", color: "var(--ink-soft)", cursor: "pointer", display: "flex" }}
+          >
+            <Icon name="close" size={18} />
+          </button>
+        </div>
+
+        {/* Target sentence */}
+        <div
+          style={{
+            padding: "10px 14px",
+            borderRadius: "var(--r-md)",
+            background: "var(--accent-tint)",
+            border: "1px solid color-mix(in oklab, var(--accent) 20%, transparent)",
+            fontSize: 13.5,
+            fontStyle: "italic",
+            color: "var(--accent-strong)",
+            lineHeight: 1.5,
+          }}
+        >
+          &ldquo;{msg.content}&rdquo;
+        </div>
+
+        {/* Advice */}
+        {loading && (
+          <div style={{ display: "flex", alignItems: "center", gap: 8, color: "var(--ink-faint)", fontSize: 13 }}>
+            <Spinner size={15} color="var(--accent)" />
+            評価中…
+          </div>
+        )}
+        {error && (
+          <span style={{ fontSize: 13, color: "var(--danger)" }}>{error}</span>
+        )}
+        {advice && (
+          <div
+            className="md-answer"
+            style={{ fontSize: 13.5, lineHeight: 1.7, fontFamily: "var(--font-jp)", color: "var(--ink)" }}
+          >
+            <ReactMarkdown>{advice}</ReactMarkdown>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─── Message bubble ─────────────────────────────────────────────
 
-function Bubble({ msg }: { msg: Message }) {
+function Bubble({ msg, onEval }: { msg: Message; onEval?: (msg: Message) => void }) {
   const isUser = msg.role === "user";
   return (
     <div
@@ -20,6 +126,8 @@ function Bubble({ msg }: { msg: Message }) {
       }}
     >
       <div
+        onClick={isUser && onEval ? () => onEval(msg) : undefined}
+        title={isUser ? "クリックして発話を評価" : undefined}
         style={{
           maxWidth: "72%",
           padding: "10px 14px",
@@ -32,6 +140,7 @@ function Bubble({ msg }: { msg: Message }) {
           lineHeight: 1.55,
           boxShadow: "var(--shadow-sm)",
           border: isUser ? "none" : "1px solid var(--line)",
+          cursor: isUser && onEval ? "pointer" : "default",
         }}
       >
         <div style={{ whiteSpace: "pre-wrap", wordBreak: "break-word" }}>
@@ -46,6 +155,9 @@ function Bubble({ msg }: { msg: Message }) {
           }}
         >
           {clockTime(msg.timestamp)}
+          {isUser && onEval && (
+            <span style={{ marginLeft: 6, opacity: 0.7, fontSize: 10 }}>tap to review</span>
+          )}
         </div>
       </div>
     </div>
@@ -59,6 +171,7 @@ function ConversationPane() {
   const [text, setText] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [sttError, setSttError] = useState("");
+  const [evalMsg, setEvalMsg] = useState<Message | null>(null);
   const sttSupported = isSttSupported();
   const bottomRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -149,6 +262,9 @@ function ConversationPane() {
         overflow: "hidden",
       }}
     >
+      {evalMsg && (
+        <EvalPopup msg={evalMsg} onClose={() => setEvalMsg(null)} />
+      )}
       <div
         style={{
           flex: 1,
@@ -192,7 +308,7 @@ function ConversationPane() {
           </div>
         )}
         {state.messages.map((m) => (
-          <Bubble key={m.id} msg={m} />
+          <Bubble key={m.id} msg={m} onEval={setEvalMsg} />
         ))}
         {state.isLoading && (
           <div style={{ display: "flex", animation: "slideUp .16s ease" }}>

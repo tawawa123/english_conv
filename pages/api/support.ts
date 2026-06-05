@@ -3,7 +3,8 @@ import { sendSupport } from "@/services/aiClient";
 
 type RequestBody =
   | { action: "suggest"; lastAiMessage: string }
-  | { action: "ask"; question: string };
+  | { action: "ask"; question: string }
+  | { action: "evaluate"; userMessage: string };
 
 type ResponseBody =
   | { reply: string }
@@ -18,7 +19,20 @@ Keep each example concise (one sentence). Do not add extra explanation.`;
 const ASK_PROMPT = (question: string) =>
   `You are a Japanese English teacher. Answer the following question in Japanese, clearly and concisely.
 Question: ${question}
-Provide practical examples where helpful. Answer in Japanese only.`;
+Provide practical examples where helpful. Answer in Japanese only. Use markdown formatting.`;
+
+const EVALUATE_PROMPT = (userMessage: string) =>
+  `You are a supportive English teacher. A learner wrote this sentence in conversation:
+"${userMessage}"
+
+Evaluate their English and give constructive feedback in Japanese using markdown.
+Structure your response with these sections:
+- **文法**: grammar correctness
+- **語彙**: vocabulary and word choice
+- **自然さ**: how natural it sounds to a native speaker
+- **改善例**: one improved version of the sentence
+
+Be encouraging and specific. Keep it concise.`;
 
 export default async function handler(
   req: NextApiRequest,
@@ -30,7 +44,6 @@ export default async function handler(
   }
 
   const body = req.body as RequestBody;
-
   let prompt: string;
 
   if (body.action === "suggest") {
@@ -43,8 +56,13 @@ export default async function handler(
       return res.status(400).json({ error: "question が必要です。" });
     }
     prompt = ASK_PROMPT(body.question);
+  } else if (body.action === "evaluate") {
+    if (!body.userMessage?.trim()) {
+      return res.status(400).json({ error: "userMessage が必要です。" });
+    }
+    prompt = EVALUATE_PROMPT(body.userMessage);
   } else {
-    return res.status(400).json({ error: "action は 'suggest' または 'ask' である必要があります。" });
+    return res.status(400).json({ error: "action は 'suggest' / 'ask' / 'evaluate' のいずれかである必要があります。" });
   }
 
   const result = await sendSupport(prompt);
