@@ -2,27 +2,35 @@ import type { NextApiRequest, NextApiResponse } from "next";
 import { sendSupport } from "@/services/aiClient";
 
 type RequestBody =
-  | { action: "suggest"; lastAiMessage: string }
-  | { action: "ask"; question: string }
-  | { action: "evaluate"; userMessage: string };
+  | { action: "suggest"; lastAiMessage: string; persona?: string }
+  | { action: "ask"; question: string; persona?: string }
+  | { action: "evaluate"; userMessage: string; persona?: string };
 
 type ResponseBody =
   | { reply: string }
   | { error: string };
 
-const SUGGEST_PROMPT = (lastAiMessage: string) =>
-  `You are an English learning assistant. The AI conversation partner just said: "${lastAiMessage}"
+const personaLine = (persona?: string) =>
+  persona?.trim()
+    ? `\nThe AI conversation partner has the following persona: ${persona.trim()}`
+    : "";
+
+const SUGGEST_PROMPT = (lastAiMessage: string, persona?: string) =>
+  `You are an English learning assistant.
+The AI conversation partner just said: "${lastAiMessage}"
 Provide 4 natural English response examples the learner could use.
 Format each as: EN: <English> | JA: <Japanese translation>
 Keep each example concise (one sentence). Do not add extra explanation.`;
 
-const ASK_PROMPT = (question: string) =>
-  `You are a Japanese English teacher. Answer the following question in Japanese, clearly and concisely.
+const ASK_PROMPT = (question: string, persona?: string) =>
+  `You are a Japanese English teacher.${personaLine(persona)}
+Answer the following question in Japanese, clearly and concisely.
 Question: ${question}
 Provide practical examples where helpful. Answer in Japanese only. Use markdown formatting.`;
 
-const EVALUATE_PROMPT = (userMessage: string) =>
-  `You are a supportive English teacher. A learner wrote this sentence in conversation:
+const EVALUATE_PROMPT = (userMessage: string, persona?: string) =>
+  `You are a supportive English teacher.${personaLine(persona)}
+A learner wrote this sentence in conversation:
 "${userMessage}"
 
 Evaluate their English and give constructive feedback in Japanese using markdown.
@@ -50,17 +58,17 @@ export default async function handler(
     if (!body.lastAiMessage) {
       return res.status(400).json({ error: "lastAiMessage が必要です。" });
     }
-    prompt = SUGGEST_PROMPT(body.lastAiMessage);
+    prompt = SUGGEST_PROMPT(body.lastAiMessage, body.persona);
   } else if (body.action === "ask") {
     if (!body.question?.trim()) {
       return res.status(400).json({ error: "question が必要です。" });
     }
-    prompt = ASK_PROMPT(body.question);
+    prompt = ASK_PROMPT(body.question, body.persona);
   } else if (body.action === "evaluate") {
     if (!body.userMessage?.trim()) {
       return res.status(400).json({ error: "userMessage が必要です。" });
     }
-    prompt = EVALUATE_PROMPT(body.userMessage);
+    prompt = EVALUATE_PROMPT(body.userMessage, body.persona);
   } else {
     return res.status(400).json({ error: "action は 'suggest' / 'ask' / 'evaluate' のいずれかである必要があります。" });
   }

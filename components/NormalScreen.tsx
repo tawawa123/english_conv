@@ -9,20 +9,20 @@ import type { ApiMessage, Message } from "@/types";
 
 // ─── EvalPopup ───────────────────────────────────────────────────
 
-function EvalPopup({ msg, onClose }: { msg: Message; onClose: () => void }) {
+function EvalPopup({ msg, onClose, persona }: { msg: Message; onClose: () => void; persona?: string }) {
   const { dispatch } = useApp();
   const [advice, setAdvice] = useState(msg.advice ?? "");
   const [loading, setLoading] = useState(!msg.advice);
   const [error, setError] = useState("");
 
-  // 発話アドバイスは一度取得したら再評価しない 
+  // 発話アドバイスは一度取得したら再評価しない
   useEffect(() => {
     if (msg.advice) return;
     // APIに評価をリクエスト
     fetch("/api/support", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "evaluate", userMessage: msg.content }),
+      body: JSON.stringify({ action: "evaluate", userMessage: msg.content, persona }),
     })
       .then((r) => r.json())
       .then((data: { reply?: string; error?: string }) => {
@@ -38,7 +38,7 @@ function EvalPopup({ msg, onClose }: { msg: Message; onClose: () => void }) {
         setError(err instanceof Error ? err.message : "エラーが発生しました。");
       })
       .finally(() => setLoading(false));
-  }, [msg.id, msg.advice, msg.content, dispatch]);
+  }, [msg.id, msg.advice, msg.content, persona, dispatch]);
 
   return (
     <div
@@ -301,7 +301,7 @@ function ConversationPane() {
       }}
     >
       {evalMsg && (
-        <EvalPopup msg={evalMsg} onClose={() => setEvalMsg(null)} />
+        <EvalPopup msg={evalMsg} onClose={() => setEvalMsg(null)} persona={state.persona.prompt} />
       )}
       <div
         style={{
@@ -507,7 +507,7 @@ function SupportPane({ width }: { width: number }) {
       const res = await fetch("/api/support", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "suggest", lastAiMessage: lastAiMsg.content }),
+        body: JSON.stringify({ action: "suggest", lastAiMessage: lastAiMsg.content, persona: state.persona.prompt }),
       });
       const data = await res.json() as { reply?: string; error?: string };
       if (!res.ok || !data.reply) throw new Error(data.error ?? "取得に失敗しました。");
@@ -528,7 +528,7 @@ function SupportPane({ width }: { width: number }) {
       const res = await fetch("/api/support", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ action: "ask", question }),
+        body: JSON.stringify({ action: "ask", question, persona: state.persona.prompt }),
       });
       const data = await res.json() as { reply?: string; error?: string };
       if (!res.ok || !data.reply) throw new Error(data.error ?? "回答取得に失敗しました。");
